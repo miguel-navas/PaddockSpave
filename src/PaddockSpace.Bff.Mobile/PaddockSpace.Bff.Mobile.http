@@ -1,0 +1,6 @@
+@PaddockSpace.Bff.Mobile_HostAddress = http://localhost:5089
+
+GET {{PaddockSpace.Bff.Mobile_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

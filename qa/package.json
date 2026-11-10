@@ -1,0 +1,20 @@
+{
+  "name": "paddockspace-qa",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "install:browsers": "playwright install chromium --no-shell",
+    "test": "playwright test",
+    "test:ui": "playwright test --ui",
+    "test:headed": "playwright test --headed",
+    "report": "playwright show-report",
+    "collect": "node scripts/collect.mjs",
+    "validate:db": "python scripts/validate_db.py",
+    "compare": "python scripts/compare_site_db.py"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@types/node": "^22.0.0"
+  }
+}

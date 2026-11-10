@@ -1,0 +1,29 @@
+# build / dependências
+bin/
+obj/
+node_modules/
+dist/
+.vs/
+*.user
+
+# artefatos de deploy e dados (não versionar)
+deploy/*
+!deploy/setup-vm.sh
+*.db
+*.db-shm
+*.db-wal
+*.tar.gz
+*.zip
+
+# saídas de QA
+qa/output/
+qa/playwright-report/
+qa/test-results/
+qa/vm/
+
+# ambiente
+.env
+.env.*
+
+# ferramentas de agentes (BMAD)
+.agents/

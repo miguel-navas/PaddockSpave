@@ -1,0 +1,599 @@
+import React, { useEffect, useState } from 'react';
+import { formatLapMs, getCountryFlagUrl, paddockApi } from '../api';
+import { DriverDetailModal, TeamDetailModal } from '../components/EntityModals';
+import { useGlobalFilter } from '../context/GlobalFilterContext';
+import type { CircuitRaceHistoryItem, DashboardData, DriverProfile, TeamProfile } from '../types';
+
+export const DashboardView: React.FC = () => {
+  const { category, seasonScope, scopeLabel, setActiveTab } = useGlobalFilter();
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+  const [selectedDriver, setSelectedDriver] = useState<DriverProfile | null>(null);
+  const [selectedTeam, setSelectedTeam] = useState<TeamProfile | null>(null);
+  const [recentRaceWinners, setRecentRaceWinners] = useState<CircuitRaceHistoryItem[]>([]);
+  const [circuitRaceHistory, setCircuitRaceHistory] = useState<CircuitRaceHistoryItem[]>([]);
+  const [previousEditionLaps, setPreviousEditionLaps] = useState<number | null>(null);
+
+  useEffect(() => {
+    setLoading(true);
+    setError(null);
+    paddockApi
+      .getDashboard(category, seasonScope)
+      .then((res) => setData(res))
+      .catch((err: Error) => setError(err.message))
+      .finally(() => setLoading(false));
+  }, [category, seasonScope]);
+
+  useEffect(() => {
+    if (!data) return;
+
+    const highlightedRace = data.races.find((race) => race.name === data.kpis.nextOrLastGrandPrix);
+    setRecentRaceWinners([]);
+    setCircuitRaceHistory([]);
+    setPreviousEditionLaps(null);
+
+    if (!highlightedRace?.circuitId) return;
+    const currentSeason = data.year ?? new Date().getFullYear();
+
+    paddockApi
+      .getCircuitDetail(category, highlightedRace.circuitId)
+      .then((detail) => {
+        setCircuitRaceHistory(detail.hostedRaces);
+        setRecentRaceWinners(
+          detail.hostedRaces
+            .filter((race) => race.season < 2026 && race.winnerName)
+            .sort((a, b) => b.season - a.season)
+            .slice(0, 5)
+        );
+        // GP ainda sem voltas registradas: usa o número de voltas da edição anterior no mesmo circuito
+        const previousEdition = detail.hostedRaces
+          .filter((race) => race.season < currentSeason && race.winnerName)
+          .sort((a, b) => b.season - a.season)[0];
+        if (!highlightedRace.laps && previousEdition) {
+          paddockApi
+            .getRaceDetail(category, previousEdition.season, previousEdition.round)
+            .then((prev) => setPreviousEditionLaps(prev.race.laps ?? null))
+            .catch(() => setPreviousEditionLaps(null));
+        }
+      }
+      )
+      .catch(() => {
+        setRecentRaceWinners([]);
+        setCircuitRaceHistory([]);
+      });
+  }, [category, data]);
+
+  const openDriver = (driverId: string) => {
+    paddockApi.getDriverProfile(category, driverId, seasonScope).then((p) => setSelectedDriver(p));
+  };
+
+  const openTeam = (teamId: string) => {
+    paddockApi.getTeamProfile(category, teamId, seasonScope).then((p) => setSelectedTeam(p));
+  };
+
+  if (loading) {
+    return <div className="panel">Carregando Dashboard de Estatísticas ({scopeLabel})...</div>;
+  }
+
+  if (error || !data) {
+    return (
+      <div className="panel">
+        <h3 className="panel-title">Aviso de Categoria / Escopo</h3>
+        <p>{error ?? 'Não foi possível carregar os dados.'}</p>
+      </div>
+    );
+  }
+
+  const { kpis, capabilities } = data;
+  const highlightedRace = data.races.find((race) => race.name === kpis.nextOrLastGrandPrix);
+  const highlightedRaceDate = highlightedRace?.raceDateUtc ?? kpis.nextOrLastGrandPrixDateBrasilia;
+  const formattedRaceDate = highlightedRaceDate
+    ? new Date(highlightedRaceDate).toLocaleDateString('pt-BR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    })
+    : '-';
+  const highlightedRaceFlag = getCountryFlagUrl(highlightedRace?.country, highlightedRace?.name);
+  const previousSeason = (data.year ?? new Date().getFullYear()) - 1;
+  // Volta mais rápida da edição mais recente já disputada (GP deste ano ainda não realizado => ano anterior)
+  const highlightedRaceDone = Boolean(highlightedRace?.winnerName);
+  const fastestCircuitLap = circuitRaceHistory
+    .filter((race) => race.fastestLapMs && race.fastestLapName)
+    .filter((race) => highlightedRaceDone || race.season <= previousSeason)
+    .sort((a, b) => b.season - a.season || b.round - a.round)[0];
+  const normalizeGrandPrixName = (name?: string | null) =>
+    (name ?? '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  const highlightedGrandPrixName = normalizeGrandPrixName(highlightedRace?.name);
+  const previousGpPitStops = data.fastestPitStops.filter((pitStop) => {
+    const pitGrandPrixName = normalizeGrandPrixName(pitStop.grandPrix);
+    return pitGrandPrixName === highlightedGrandPrixName ||
+      (highlightedGrandPrixName && pitGrandPrixName.includes(highlightedGrandPrixName));
+  });
+  // linhas da edição anterior vêm com round = -1 (as da temporada atual têm round > 0)
+  const previousGpWeather = data.weatherSummaries.filter((weather) => {
+    if ((weather.round ?? 0) >= 0) return false;
+    const weatherGrandPrixName = normalizeGrandPrixName(weather.grandPrix);
+    return weatherGrandPrixName === highlightedGrandPrixName ||
+      (highlightedGrandPrixName && weatherGrandPrixName.includes(highlightedGrandPrixName));
+  });
+
+  return (
+    <div>
+      {/* <div className="scope-banner">
+        <div>
+          <strong>Escopo Global Ativo:</strong> {scopeLabel}
+        </div>
+        <div className="badge-row">
+          <span className={`pill ${capabilities.hasRichTelemetry ? 'pill-green' : 'pill-muted'}`}>
+            Telemetria OpenF1: {capabilities.hasRichTelemetry ? 'Ativa' : 'Somente 2026'}
+          </span>
+          <span className={`pill ${capabilities.hasQualifyingSplits ? 'pill-gold' : 'pill-muted'}`}>
+            Classificatório Q1/Q2/Q3: {capabilities.hasQualifyingSplits ? 'Disponível' : 'Grid Histórico'}
+          </span>
+          <span className={`pill ${capabilities.hasSprintRaces ? 'pill-green' : 'pill-muted'}`}>
+            Corridas Sprint: {capabilities.hasSprintRaces ? 'Sim' : 'Não aplicável'}
+          </span>
+          <span className={`pill ${capabilities.hasConstructorChampionship ? 'pill-gold' : 'pill-muted'}`}>
+            Mundial de Construtores: {capabilities.hasConstructorChampionship ? 'Ativo' : 'Iniciado em 1958'}
+          </span>
+        </div>
+      </div> */}
+
+      {/* Visão principal */}
+      <div className="dashboard-hero-grid">
+        <div
+          className="kpi-card dashboard-gp-box"
+          style={highlightedRaceFlag ? {
+            backgroundImage: `linear-gradient(90deg, rgba(5, 6, 10, 0.92) 0%, rgba(5, 6, 10, 0.58) 58%, rgba(5, 6, 10, 0.2) 100%), url("${highlightedRaceFlag}")`
+          } : undefined}
+        >
+          <div className="kpi-label">
+            {data.scopeKind === 'Current' ? 'Próximo / Último GP' : 'Destaque Temporal'}
+          </div>
+          <div className="dashboard-gp-top">
+            <div>
+              <div className="kpi-value dashboard-gp-title">{highlightedRace?.name ?? kpis.nextOrLastGrandPrix ?? '-'}</div>
+              <div className="kpi-sub">{formattedRaceDate}</div>
+            </div>
+          </div>
+          <div className="kpi-sub">{(highlightedRace?.laps ?? previousEditionLaps)
+            ? `${highlightedRace?.laps ?? previousEditionLaps} voltas`
+            : 'Voltas não disponíveis'}</div>
+        </div>
+
+        <div className="kpi-card dashboard-leader-card">
+          <div className="kpi-label">Últimos 5 vencedores deste GP</div>
+          <div className="dashboard-winners-list">
+            {recentRaceWinners.map((race) => (
+              <div className="dashboard-winner-row" key={`${race.season}-${race.round}`}>
+                <span className="dashboard-winner-year">{race.season}</span>
+                <strong>{race.winnerName}</strong>
+                {race.winnerTeam && <span className="dashboard-winner-team">{race.winnerTeam}</span>}
+              </div>
+            ))}
+            {recentRaceWinners.length === 0 && (
+              <div className="kpi-sub">Histórico indisponível</div>
+            )}
+          </div>
+        </div>
+
+        <div className="kpi-card dashboard-leader-card dashboard-fastest-card">
+          <div className="kpi-label">
+            Volta mais rápida {fastestCircuitLap ? `- GP ${fastestCircuitLap.season}` : 'do GP'}
+          </div>
+          <div className="dashboard-fastest-lap">
+            {fastestCircuitLap ? (
+              <>
+                <div className="dashboard-fastest-lap-year">{fastestCircuitLap.season}</div>
+                <div className="dashboard-fastest-lap-details">
+                  <strong>{fastestCircuitLap.fastestLapName}</strong>
+                  <span>{fastestCircuitLap.fastestLapTeam ?? 'Equipe indisponível'}</span>
+                </div>
+                <div className="dashboard-fastest-lap-time">{formatLapMs(fastestCircuitLap.fastestLapMs)}</div>
+                <div className="dashboard-fastest-lap-number">
+                  Volta {fastestCircuitLap.fastestLapNumber ?? '-'}
+                </div>
+              </>
+            ) : (
+              <div className="dashboard-fastest-lap-empty">Volta mais rápida indisponível</div>
+            )}
+          </div>
+          {/* <div className="kpi-sub">
+            {kpis.leaderOrChampionTeamPoints != null
+              ? data.scopeKind === 'AllTime'
+                ? `${kpis.leaderOrChampionTeamPoints} vitórias na história`
+                : `${kpis.leaderOrChampionTeamPoints} pts`
+              : ''}
+          </div> */}
+        </div>
+      </div>
+
+      <div className="dashboard-leaders-grid">
+        <div className="kpi-card">
+          <div className="kpi-label">
+            {data.scopeKind === 'Current'
+              ? 'Líder do Mundial de Pilotos'
+              : data.scopeKind === 'AllTime'
+                ? 'Piloto Mais Vencedor'
+                : `Líder do Mundial de Pilotos (${data.year})`}
+          </div>
+          <div className="kpi-value">{kpis.leaderOrChampionDriver ?? 'N/A'}</div>
+          <div className="kpi-sub">
+            {kpis.leaderOrChampionDriverPoints != null
+              ? data.scopeKind === 'AllTime'
+                ? `${kpis.leaderOrChampionDriverPoints} vitórias na história`
+                : `${kpis.leaderOrChampionDriverPoints} pts`
+              : ''}
+          </div>
+        </div>
+        <div className="kpi-card">
+          <div className="kpi-label">
+            {data.scopeKind === 'Current'
+              ? 'Líder de Construtores'
+              : data.scopeKind === 'AllTime'
+                ? 'Equipe Mais Vitoriosa'
+                : `Campeã de Construtores (${data.year})`}
+          </div>
+          <div className="kpi-value">{kpis.leaderOrChampionTeam ?? 'N/A (Pré-1958)'}</div>
+          <div className="kpi-sub">
+            {kpis.leaderOrChampionTeamPoints != null
+              ? data.scopeKind === 'AllTime'
+                ? `${kpis.leaderOrChampionTeamPoints} vitórias na história`
+                : `${kpis.leaderOrChampionTeamPoints} pts`
+              : ''}
+          </div>
+        </div>
+      </div>
+
+      {/* TELEMETRIA EXCLUSIVA DA TEMPORADA ATUAL (2026) */}
+      {data.scopeKind === 'Current' && (
+        <div className="grid-2">
+          <div className="panel">
+            <div className="panel-header">
+              <h3 className="panel-title">Pit Stop mais rápido - {highlightedRace?.name ?? kpis.nextOrLastGrandPrix} ({previousSeason})</h3>
+            </div>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    {/* <th>Grande Prêmio</th> */}
+                    <th>Piloto</th>
+                    <th>Equipe</th>
+                    <th>Volta</th>
+                    <th>Tempo (s)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previousGpPitStops.slice(0, 1).map((p, idx) => (
+                    <tr key={`${p.grandPrix}-${p.driverName}-${idx}`}>
+                      {/* <td>{p.grandPrix}</td> */}
+                      <td>
+                        <strong>{p.driverName}</strong>
+                      </td>
+                      <td>{p.teamName ?? '-'}</td>
+                      <td>Volta {p.lap}</td>
+                      <td>
+                        <span className="pill pill-green">{p.durationSeconds?.toFixed(2)}s</span>
+                      </td>
+                    </tr>
+                  ))}
+                  {previousGpPitStops.length === 0 && (
+                    <tr>
+                      <td colSpan={5}>Dados do ano anterior indisponíveis</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <h3 className="panel-title">Clima {highlightedRace?.name ?? kpis.nextOrLastGrandPrix} ({previousSeason})</h3>
+            </div>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    {/* <th>GP / Etapa</th> */}
+                    <th>Sessão</th>
+                    <th>Temp. Ar</th>
+                    <th>Temp. Pista</th>
+                    <th>Umidade</th>
+                    <th>Chuva</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previousGpWeather.slice(0, 10).map((w, idx) => (
+                    <tr key={`${w.round}-${w.sessionName}-${idx}`}>
+                      {/* <td>{w.grandPrix}</td> */}
+                      <td>{w.sessionName}</td>
+                      <td>{w.avgAirTemp?.toFixed(1)} °C</td>
+                      <td>{w.avgTrackTemp?.toFixed(1)} °C</td>
+                      <td>{w.avgHumidity?.toFixed(0)}%</td>
+                      <td>
+                        <span className={`pill ${w.hadRain ? 'pill-gold' : 'pill-muted'}`}>
+                          {w.hadRain ? 'Chuva' : 'Seco'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {previousGpWeather.length === 0 && (
+                    <tr>
+                      <td colSpan={6}>Dados climáticos do ano anterior indisponíveis</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODO CURRENT (2026) OU HISTORICAL (1950..2025) */}
+      {data.scopeKind !== 'AllTime' && (
+        <>
+          <div className="grid-2">
+            <div className="panel">
+              <div className="panel-header">
+                <h3 className="panel-title">Top 10 Classificação de Pilotos ({data.scopeKey})</h3>
+                <button type="button" className="quick-scope-btn" onClick={() => setActiveTab('drivers')}>
+                  Ver todos os pilotos
+                </button>
+              </div>
+              <div className="table-wrap">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Pos</th>
+                      <th>Piloto</th>
+                      <th>Equipe</th>
+                      <th>Vitórias</th>
+                      <th>Pontos</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.driverStandings.slice(0, 10).map((d) => (
+                      <tr
+                        key={d.driverId}
+                        className="clickable-row"
+                        onClick={() => openDriver(d.driverId)}
+                      >
+                        <td>#{d.position}</td>
+                        <td>
+                          <strong>{d.driverName}</strong>{' '}
+                          {d.code ? <span className="pill pill-muted">{d.code}</span> : null}
+                        </td>
+                        <td>{d.teamName ?? '-'}</td>
+                        <td>{d.wins}</td>
+                        <td>
+                          <strong>{d.points}</strong>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="panel">
+              <div className="panel-header">
+                <h3 className="panel-title">Classificação de Equipes ({data.scopeKey})</h3>
+                <button type="button" className="quick-scope-btn" onClick={() => setActiveTab('teams')}>
+                  Ver todas as equipes
+                </button>
+              </div>
+              {data.teamStandings.length === 0 ? (
+                <p>O Campeonato Mundial de Construtores foi instituído em 1958.</p>
+              ) : (
+                <div className="table-wrap">
+                  <table className="data-table">
+                    <thead>
+                      <tr>
+                        <th>Pos</th>
+                        <th>Equipe</th>
+                        <th>Vitórias</th>
+                        <th>Pontos</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.teamStandings.slice(0, 10).map((t) => (
+                        <tr
+                          key={t.teamId}
+                          className="clickable-row"
+                          onClick={() => openTeam(t.teamId)}
+                        >
+                          <td>#{t.position}</td>
+                          <td>
+                            <strong>{t.teamName}</strong>
+                          </td>
+                          <td>{t.wins}</td>
+                          <td>
+                            <strong>{t.points}</strong>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <h3 className="panel-title">Estatísticas Avançadas de Pilotos na Temporada ({data.scopeKey})</h3>
+            </div>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Piloto</th>
+                    <th>GPs</th>
+                    <th>Vitórias</th>
+                    <th>Pódios</th>
+                    <th>Poles</th>
+                    <th>Voltas Rápidas</th>
+                    <th>Abandonos</th>
+                    {/* <th>Largada Média</th>
+                    <th>Chegada Média</th>
+                    <th>Pos. Ganhas</th> */}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.driverSeasonStats.slice(0, 15).map((s) => (
+                    <tr
+                      key={s.driverId}
+                      className="clickable-row"
+                      onClick={() => openDriver(s.driverId)}
+                    >
+                      <td>
+                        <strong>{s.driverName}</strong>
+                      </td>
+                      <td>{s.races ?? 0}</td>
+                      <td>{s.wins ?? 0}</td>
+                      <td>{s.podiums ?? 0}</td>
+                      <td>{s.poles ?? 0}</td>
+                      <td>{s.fastestLaps ?? 0}</td>
+                      <td>{s.retirements ?? 0}</td>
+                      {/* <td>{s.avgGrid ?? '-'}</td>
+                      <td>{s.avgFinish ?? '-'}</td>
+                      <td>{s.positionsGained ?? 0}</td> */}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+
+
+      {/* MODO ALL-TIME (1950 - HOJE) */}
+      {data.scopeKind === 'AllTime' && (
+        <div className="grid-2">
+          <div className="panel">
+            <div className="panel-header">
+              <h3 className="panel-title">Maiores Pilotos da História (1950–2026)</h3>
+              <button type="button" className="quick-scope-btn" onClick={() => setActiveTab('drivers')}>
+                Ver todos os 794+ pilotos
+              </button>
+            </div>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Piloto</th>
+                    <th>Títulos</th>
+                    <th>Vitórias</th>
+                    <th>Pódios</th>
+                    <th>Poles</th>
+                    <th>GPs</th>
+                    <th>% Vit.</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.careerTopDrivers.slice(0, 15).map((d) => (
+                    <tr
+                      key={d.driverId}
+                      className="clickable-row"
+                      onClick={() => openDriver(d.driverId)}
+                    >
+                      <td>
+                        <strong>{d.fullName}</strong> ({d.nationality})
+                      </td>
+                      <td>
+                        <span className="pill pill-gold">{d.championships}x</span>
+                      </td>
+                      <td>
+                        <strong>{d.wins}</strong>
+                      </td>
+                      <td>{d.podiums}</td>
+                      <td>{d.poles}</td>
+                      <td>{d.races}</td>
+                      <td>{d.winPercentage}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="panel">
+            <div className="panel-header">
+              <h3 className="panel-title">Maiores Equipes / Construtores (1950–2026)</h3>
+              <button type="button" className="quick-scope-btn" onClick={() => setActiveTab('teams')}>
+                Ver todas as 202+ equipes
+              </button>
+            </div>
+            <div className="table-wrap">
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Equipe</th>
+                    <th>Títulos</th>
+                    <th>Vitórias</th>
+                    <th>Pódios</th>
+                    <th>Poles</th>
+                    <th>GPs</th>
+                    <th>Período</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.careerTopTeams.slice(0, 15).map((t) => (
+                    <tr
+                      key={t.teamId}
+                      className="clickable-row"
+                      onClick={() => openTeam(t.teamId)}
+                    >
+                      <td>
+                        <strong>{t.name}</strong> ({t.nationality})
+                      </td>
+                      <td>
+                        <span className="pill pill-gold">{t.constructorTitles}x</span>
+                      </td>
+                      <td>
+                        <strong>{t.wins}</strong>
+                      </td>
+                      <td>{t.podiums}</td>
+                      <td>{t.poles}</td>
+                      <td>{t.races}</td>
+                      <td>
+                        {t.firstSeason}–{t.lastSeason}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {selectedDriver && (
+        <DriverDetailModal
+          profile={selectedDriver}
+          seasonLabel={scopeLabel}
+          onClose={() => setSelectedDriver(null)}
+        />
+      )}
+
+      {selectedTeam && (
+        <TeamDetailModal
+          profile={selectedTeam}
+          seasonLabel={scopeLabel}
+          onClose={() => setSelectedTeam(null)}
+          onSelectDriver={(driverId) => openDriver(driverId)}
+        />
+      )}
+    </div>
+  );
+};

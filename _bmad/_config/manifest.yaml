@@ -1,0 +1,49 @@
+installation:
+  version: 6.12.4
+  installDate: 2026-10-29T19:21:58.288Z
+  lastUpdated: 2026-10-29T19:21:58.288Z
+  installShims: false
+modules:
+  - name: core
+    version: 6.12.4
+    installDate: 2026-10-29T19:21:54.758Z
+    lastUpdated: 2026-10-29T19:21:58.274Z
+    source: built-in
+    npmPackage: null
+    repoUrl: null
+  - name: bmm
+    version: 6.12.4
+    installDate: 2026-10-29T19:21:55.088Z
+    lastUpdated: 2026-10-29T19:21:58.276Z
+    source: built-in
+    npmPackage: null
+    repoUrl: null
+  - name: bmb
+    version: v2.2.2
+    installDate: 2026-10-29T19:21:55.381Z
+    lastUpdated: 2026-10-29T19:21:58.280Z
+    source: external
+    npmPackage: bmad-builder
+    repoUrl: https://github.com/bmad-code-org/bmad-builder
+    channel: stable
+    sha: 4a1422274a2acb0fb0ec0511753da6263948f072
+  - name: tea
+    version: v1.27.2
+    installDate: 2026-10-29T19:21:57.036Z
+    lastUpdated: 2026-10-29T19:21:58.285Z
+    source: external
+    npmPackage: bmad-method-test-architecture-enterprise
+    repoUrl: https://github.com/bmad-code-org/bmad-method-test-architecture-enterprise
+    channel: pinned
+    sha: d99ad29c62697c152e3393351406686d5bcd323c
+  - name: gds
+    version: v0.7.2
+    installDate: 2026-10-29T19:21:57.697Z
+    lastUpdated: 2026-10-29T19:21:58.288Z
+    source: external
+    npmPackage: bmad-game-dev-studio
+    repoUrl: https://github.com/bmad-code-org/bmad-module-game-dev-studio.git
+    channel: stable
+    sha: 2486f5f5f3b8870baa6cee4615a870c0330f441c
+ides:
+  - antigravity-cli
